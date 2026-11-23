@@ -1,22 +1,43 @@
-import mssql from "mssql";
-//Cree un objeto que contiene los parametros de conexion a nuestra bd 
-const connectionsettings = {
-    server: "localhost,1434",
-    database: "bd_restaurante",
-    user: "sa",
-    password: "Admin123!",
-    options:{
+
+const sql = require("mssql");
+const dotenv = require("dotenv");
+
+dotenv.config();
+
+const connectionSettings = {
+    server: process.env.DB_SERVER || "localhost",
+    port: Number(process.env.DB_PORT || 1434),
+    database: process.env.DB_DATABASE || "bd_restaurante",
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    options: {
         encrypt: true,
         trustServerCertificate: true
-    } };
-
-    export async function getConnection(){  
-        try{
-        return await mssql.connect (connectionsettings); //retorna lo que dice la libreria sql en el parametro connect por medio de una promesa 
+    },
+    pool: {
+        max: 10,
+        min: 0,
+        idleTimeoutMillis: 30000
     }
-    catch(error)
-    { console.error(error);
+};
 
-    }
-}
-  export {mssql};
+// Crear un único pool de conexión para todo el backend
+const poolPromise = new sql.ConnectionPool(connectionSettings)
+    .connect()
+    .then(pool => {
+        console.log("Conexión a SQL Server establecida correctamente");
+        return pool;
+    })
+    .catch(error => {
+        console.error("Error al conectar con SQL Server:", error.message);
+        throw error;
+    });
+
+// Función compatible con módulos que necesiten obtener la conexión
+const getConnection = () => poolPromise;
+
+module.exports = {
+    sql,
+    poolPromise,
+    getConnection
+};

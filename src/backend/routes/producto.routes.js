@@ -1,9 +1,14 @@
-import { Router } from "express";
-import { obtenerMenuConRecetas, crearProductoConReceta } from "../controllers/productos.controller.js";
+
+const { Router } = require("express");
+
+const {
+    obtenerMenuConRecetas,
+    crearProductoConReceta
+} = require("../controllers/productos.controller");
 
 const router = Router();
 
 router.get("/", obtenerMenuConRecetas);
 router.post("/", crearProductoConReceta);
 
-export default router;
+module.exports = router;

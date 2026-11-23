@@ -1,4 +1,4 @@
-const { sql, poolPromise } = require('../config/db');
+const { sql, poolPromise } = require('../config/coneccionSQLserver');
 
 const obtenerMenuConRecetas = async (req, res) => {
     try {

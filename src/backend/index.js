@@ -1,23 +1,37 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
 
-import inventarioRoutes from "./routes/inventario.routes.js";
-import productosRoutes from "./routes/productos.routes.js";
-import insumosRoutes from "./routes/insumos.routes.js";
+const express = require("express");
+const cors = require("cors");
+const dotenv = require("dotenv");
+
+const inventarioRoutes = require("./routes/inventario.routes");
+const productosRoutes = require("./routes/producto.routes");
+const insumosRoutes = require("./routes/insumos.routes");
 
 dotenv.config();
 
 const app = express();
+
+// Middlewares globales
 app.use(cors());
 app.use(express.json());
 
-// Rutas del módulo de Inventario, Productos e Insumos
+// Rutas principales
 app.use("/api/inventario", inventarioRoutes);
 app.use("/api/productos", productosRoutes);
 app.use("/api/insumos", insumosRoutes);
 
+// Ruta de comprobación
+app.get("/api/health", (req, res) => {
+    res.status(200).json({
+        status: "OK",
+        message: "API Restaurante Orígenes SV funcionando"
+    });
+});
+
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
     console.log(`Servidor Orígenes SV corriendo en http://localhost:${PORT}`);
 });
+
+module.exports = app;

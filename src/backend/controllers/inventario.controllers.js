@@ -59,5 +59,43 @@ const obtenerAlertasStock = async (req, res) => {
     }
 };
 
-module.exports = { obtenerInventarioPorSucursal, obtenerAlertasStock };
+const obtenerInventarioGeneral = async (req, res) => {
+    try {
+        const pool = await poolPromise;
+
+        const result = await pool.request().query(`
+            SELECT
+                s.id_sucursal,
+                s.nombre AS sucursal,
+                inv.id_inventario,
+                i.id_insumo,
+                i.nombre AS insumo,
+                i.unidad_medida,
+                i.es_reventa,
+                inv.stock_actual,
+                i.stock_minimo,
+                i.precio_unitario
+            FROM inventario_sucursal inv
+            INNER JOIN sucursales s
+                ON inv.id_sucursal = s.id_sucursal
+            INNER JOIN insumos i
+                ON inv.id_insumo = i.id_insumo
+            ORDER BY s.id_sucursal, i.nombre ASC
+        `);
+
+        res.status(200).json(result.recordset);
+
+    } catch (error) {
+        res.status(500).json({
+            mensaje: 'Error al consultar inventario general',
+            error: error.message
+        });
+    }
+};
+
+module.exports = {
+    obtenerInventarioGeneral,
+    obtenerInventarioPorSucursal,
+    obtenerAlertasStock
+};
     

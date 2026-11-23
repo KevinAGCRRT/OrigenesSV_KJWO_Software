@@ -1,9 +1,13 @@
-import { Router } from "express";
-import { obtenerInsumos, crearInsumo } from "../controllers/insumos.controller.js";
+const { Router } = require("express");
+
+const {
+    obtenerInsumos,
+    crearInsumo
+} = require("../controllers/insumos.controller");
 
 const router = Router();
 
 router.get("/", obtenerInsumos);
 router.post("/", crearInsumo);
 
-export default router;
+module.exports = router;
