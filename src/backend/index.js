@@ -1,13 +1,13 @@
 
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
 
 const inventarioRoutes = require("./routes/inventario.routes");
 const productosRoutes = require("./routes/producto.routes");
 const insumosRoutes = require("./routes/insumos.routes");
-
-dotenv.config();
+const authRoutes = require("./routes/auth.routes");
 
 const app = express();
 
@@ -15,23 +15,48 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Ruta de comprobacion
+app.get("/api/health", (req, res) => {
+    res.status(200).json({
+        status: "OK",
+        message: "API Restaurante Origenes SV funcionando"
+    });
+});
+
 // Rutas principales
+app.use("/api/auth", authRoutes);
 app.use("/api/inventario", inventarioRoutes);
 app.use("/api/productos", productosRoutes);
 app.use("/api/insumos", insumosRoutes);
 
-// Ruta de comprobación
-app.get("/api/health", (req, res) => {
-    res.status(200).json({
-        status: "OK",
-        message: "API Restaurante Orígenes SV funcionando"
+// Ruta no encontrada
+app.use((req, res) => {
+    res.status(404).json({
+        mensaje: "La ruta solicitada no existe"
+    });
+});
+
+// Manejo global de errores
+app.use((error, req, res, next) => {
+    console.error("Error en el servidor:", error);
+
+    if (res.headersSent) {
+        return next(error);
+    }
+
+    res.status(error.status || 500).json({
+        mensaje: error.status
+            ? error.message
+            : "Error interno del servidor"
     });
 });
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-    console.log(`Servidor Orígenes SV corriendo en http://localhost:${PORT}`);
-});
+if (require.main === module) {
+    app.listen(PORT, () => {
+        console.log(`Servidor Origenes SV corriendo en http://localhost:${PORT}`);
+    });
+}
 
 module.exports = app;
