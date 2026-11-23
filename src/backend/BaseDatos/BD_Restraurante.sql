@@ -82,3 +82,49 @@ CREATE TABLE movimientos_inventario (
         REFERENCES insumos (id_insumo) ON UPDATE NO ACTION ON DELETE NO ACTION
 );
 GO
+
+
+
+IF OBJECT_ID('dbo.empleados', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.empleados (
+        id_empleado INT IDENTITY(1,1) PRIMARY KEY,
+        nombre VARCHAR(60) NOT NULL,
+        apellido VARCHAR(60) NOT NULL,
+        correo VARCHAR(100) NOT NULL UNIQUE,
+        telefono VARCHAR(15) NULL,
+        id_sucursal INT NOT NULL,
+        fecha_contratacion DATE NOT NULL
+            DEFAULT CAST(GETDATE() AS DATE),
+        activo BIT NOT NULL DEFAULT 1,
+
+        CONSTRAINT FK_empleados_sucursales
+            FOREIGN KEY (id_sucursal)
+            REFERENCES dbo.sucursales(id_sucursal)
+    );
+END;
+GO
+
+
+
+IF OBJECT_ID('dbo.usuarios', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.usuarios (
+        id_usuario INT IDENTITY(1,1) PRIMARY KEY,
+        id_empleado INT NOT NULL UNIQUE,
+        username VARCHAR(50) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        rol VARCHAR(20) NOT NULL,
+        activo BIT NOT NULL DEFAULT 1,
+        fecha_creacion DATETIME2 NOT NULL
+            DEFAULT SYSDATETIME(),
+
+        CONSTRAINT FK_usuarios_empleados
+            FOREIGN KEY (id_empleado)
+            REFERENCES dbo.empleados(id_empleado),
+
+        CONSTRAINT CK_usuarios_rol
+            CHECK (rol IN ('gerente', 'cajero', 'barista'))
+    );
+END;
+GO
