@@ -1,6 +1,6 @@
-import { mssql } from "../config/coneccionSQLserver.js";
+const { sql: mssql } = require("../config/coneccionSQLserver");
 
-export async function descontarInventarioPorVenta(transaction, idSucursal, itemsVendidos, referenciaId = null) {
+async function descontarInventarioPorVenta(transaction, idSucursal, itemsVendidos, referenciaId = null) {
   if (!itemsVendidos || itemsVendidos.length === 0) {
     throw new Error("No se proporcionaron productos para procesar el descuento de inventario.");
   }
@@ -137,3 +137,5 @@ export async function descontarInventarioPorVenta(transaction, idSucursal, items
     insumosDescontados: Array.from(insumosRequeridos.values())
   };
 }
+
+module.exports = { descontarInventarioPorVenta };
