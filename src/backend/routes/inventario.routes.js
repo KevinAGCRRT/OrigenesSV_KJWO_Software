@@ -1,3 +1,4 @@
+
 const { Router } = require("express");
 
 const {
@@ -6,15 +7,17 @@ const {
     obtenerAlertasStock
 } = require("../controllers/inventario.controllers");
 
+const { verificarToken } = require("../middlewares/auth.middleware");
+const { autorizarRoles } = require("../middlewares/roles.middleware");
+
 const router = Router();
 
-// Inventario de todas las sucursales
+// Toda consulta requiere autenticación.
+router.use(verificarToken);
+router.use(autorizarRoles("gerente", "cajero"));
+
 router.get("/", obtenerInventarioGeneral);
-
-// Inventario por sucursal
 router.get("/:idSucursal", obtenerInventarioPorSucursal);
-
-// Alertas de stock por sucursal
 router.get("/:idSucursal/alertas", obtenerAlertasStock);
 
 module.exports = router;

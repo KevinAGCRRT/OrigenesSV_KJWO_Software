@@ -5,7 +5,10 @@ const { sql, poolPromise } = require("../config/coneccionSQLserver");
 const verificarToken = async (req, res, next) => {
     const authorization = req.headers.authorization;
 
-    if (!authorization || !authorization.startsWith("Bearer ")) {
+    if (
+        typeof authorization !== "string" ||
+        !authorization.startsWith("Bearer ")
+    ) {
         return res.status(401).json({
             mensaje: "Token de autenticación requerido"
         });
@@ -41,8 +44,12 @@ const verificarToken = async (req, res, next) => {
 
     // 2. Validar estructura del payload
     if (
+        !decoded ||
+        typeof decoded !== "object" ||
         !Number.isInteger(decoded.id_usuario) ||
-        decoded.id_usuario <= 0
+        decoded.id_usuario <= 0 ||
+        !Number.isInteger(decoded.iat) ||
+        !Number.isInteger(decoded.exp)
     ) {
         return res.status(401).json({
             mensaje: "Token de autenticación inválido"
@@ -92,7 +99,7 @@ const verificarToken = async (req, res, next) => {
             });
         }
 
-        // 5. Utilizar información actual de la base de datos
+        // 5. Utilizar exclusivamente datos actuales de SQL Server
         req.user = {
             id_usuario: usuario.id_usuario,
             id_empleado: usuario.id_empleado,
@@ -101,7 +108,7 @@ const verificarToken = async (req, res, next) => {
             username: usuario.username
         };
 
-        next();
+        return next();
 
     } catch (error) {
         next(error);

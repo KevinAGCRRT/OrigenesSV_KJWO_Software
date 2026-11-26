@@ -6,9 +6,17 @@ const {
     crearProductoConReceta
 } = require("../controllers/productos.controller");
 
+const { verificarToken } = require("../middlewares/auth.middleware");
+const { autorizarRoles } = require("../middlewares/roles.middleware");
+
 const router = Router();
 
-router.get("/", obtenerMenuConRecetas);
-router.post("/", crearProductoConReceta);
+router.use(verificarToken);
+
+// Consulta de productos
+router.get("/", autorizarRoles("gerente", "cajero"), obtenerMenuConRecetas);
+
+// Creación de productos
+router.post("/", autorizarRoles("gerente"), crearProductoConReceta);
 
 module.exports = router;

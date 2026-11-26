@@ -1,3 +1,4 @@
+
 const { sql, poolPromise } = require("../config/coneccionSQLserver");
 
 // ======================================================
@@ -7,7 +8,10 @@ const { sql, poolPromise } = require("../config/coneccionSQLserver");
 const PORCENTAJE_ISSS = 0.03;
 const PORCENTAJE_AFP = 0.0725;
 
-// ISR se recibe como monto calculado/validado externamente.
+// ======================================================
+// VALIDACIONES
+// ======================================================
+
 const validarId = (id) =>
     /^\d+$/.test(String(id)) &&
     Number.isSafeInteger(Number(id)) &&
@@ -28,7 +32,7 @@ const validarFecha = (fecha) => {
     );
 };
 
-const validarPeriodoMensual = (inicio, fin) => {
+const validarPeriodoQuincenal = (inicio, fin) => {
     if (!validarFecha(inicio) || !validarFecha(fin)) {
         return false;
     }
@@ -36,36 +40,64 @@ const validarPeriodoMensual = (inicio, fin) => {
     const fechaInicio = new Date(`${inicio}T00:00:00Z`);
     const fechaFin = new Date(`${fin}T00:00:00Z`);
 
-    return (
-        fechaInicio.getUTCDate() === 1 &&
-        fechaInicio.getUTCMonth() === fechaFin.getUTCMonth() &&
-        fechaInicio.getUTCFullYear() === fechaFin.getUTCFullYear() &&
-        fechaFin.getUTCDate() ===
-            new Date(
-                Date.UTC(
-                    fechaFin.getUTCFullYear(),
-                    fechaFin.getUTCMonth() + 1,
-                    0
-                )
-            ).getUTCDate()
-    );
-};
+    const anioInicio = fechaInicio.getUTCFullYear();
+    const mesInicio = fechaInicio.getUTCMonth();
+    const diaInicio = fechaInicio.getUTCDate();
 
-const validarISR = (valor) => {
-    if (
-        typeof valor !== "number" &&
-        typeof valor !== "string"
-    ) {
+    const anioFin = fechaFin.getUTCFullYear();
+    const mesFin = fechaFin.getUTCMonth();
+    const diaFin = fechaFin.getUTCDate();
+
+    if (anioInicio !== anioFin || mesInicio !== mesFin) {
         return false;
     }
 
-    const numero = Number(valor);
+    const ultimoDiaMes = new Date(
+        Date.UTC(anioFin, mesFin + 1, 0)
+    ).getUTCDate();
 
-    return Number.isFinite(numero) && numero >= 0;
+    // Primera quincena: del 1 al 15.
+    const primeraQuincena =
+        diaInicio === 1 && diaFin === 15;
+
+    // Segunda quincena: del 16 al último día del mes.
+    const segundaQuincena =
+        diaInicio === 16 && diaFin === ultimoDiaMes;
+
+    return primeraQuincena || segundaQuincena;
 };
 
 const redondear = (valor) =>
     Math.round((valor + Number.EPSILON) * 100) / 100;
+
+// ======================================================
+// CÁLCULO AUTOMÁTICO ISR - EL SALVADOR
+// TABLA QUINCENAL DECRETO EJECUTIVO N.º 10
+// ======================================================
+
+const calcularISR = (remuneracionGravada) => {
+    const base = redondear(remuneracionGravada);
+
+    if (base <= 275.00) {
+        return 0;
+    }
+
+    if (base <= 447.62) {
+        return redondear(
+            8.83 + (base - 275.00) * 0.10
+        );
+    }
+
+    if (base <= 1019.05) {
+        return redondear(
+            30.00 + (base - 447.62) * 0.20
+        );
+    }
+
+    return redondear(
+        144.28 + (base - 1019.05) * 0.30
+    );
+};
 
 // ======================================================
 // 1. LISTAR NÓMINAS DE LA SUCURSAL
@@ -175,8 +207,7 @@ const crearNomina = async (req, res, next) => {
         const {
             id_empleado,
             fecha_inicio,
-            fecha_fin,
-            monto_isr = 0
+            fecha_fin
         } = req.body;
 
         if (!validarId(id_empleado)) {
@@ -185,21 +216,16 @@ const crearNomina = async (req, res, next) => {
             });
         }
 
-        if (!validarPeriodoMensual(fecha_inicio, fecha_fin)) {
+        if (!validarPeriodoQuincenal(fecha_inicio, fecha_fin)) {
             return res.status(400).json({
-                mensaje: "El período debe corresponder a un mes completo, desde el primer hasta el último día."
-            });
-        }
-
-        if (!validarISR(monto_isr)) {
-            return res.status(400).json({
-                mensaje: "El monto de ISR no es válido."
+                mensaje:
+                    "El período debe corresponder a una quincena válida: del 1 al 15 o del 16 al último día del mes."
             });
         }
 
         const pool = await poolPromise;
 
-        // 1. Obtener empleado activo y perteneciente a la sucursal.
+        // 1. Obtener empleado activo de la sucursal.
         const resultadoEmpleado = await pool.request()
             .input("id_empleado", sql.Int, Number(id_empleado))
             .input("id_sucursal", sql.Int, req.user.id_sucursal)
@@ -215,7 +241,8 @@ const crearNomina = async (req, res, next) => {
 
         if (resultadoEmpleado.recordset.length === 0) {
             return res.status(404).json({
-                mensaje: "Empleado no encontrado, inactivo o fuera de tu sucursal."
+                mensaje:
+                    "Empleado no encontrado, inactivo o fuera de tu sucursal."
             });
         }
 
@@ -229,38 +256,84 @@ const crearNomina = async (req, res, next) => {
             });
         }
 
-        // 2. Calcular deducciones.
-        const salarioPeriodo = redondear(salarioBase);
-        const montoISSS = redondear(salarioPeriodo * PORCENTAJE_ISSS);
-        const montoAFP = redondear(salarioPeriodo * PORCENTAJE_AFP);
-        const montoISR = redondear(Number(req.body.monto_isr ?? 0));
+        // 2. Calcular salario quincenal.
+        const salarioPeriodo = redondear(salarioBase / 2);
 
+        // 3. Calcular cotizaciones laborales.
+        const montoISSS = redondear(
+            salarioPeriodo * PORCENTAJE_ISSS
+        );
+
+        const montoAFP = redondear(
+            salarioPeriodo * PORCENTAJE_AFP
+        );
+
+        // 4. Calcular remuneración gravada.
+        // Se descuentan ISSS y AFP antes de aplicar la tabla ISR.
+        const remuneracionGravada = redondear(
+            salarioPeriodo - montoISSS - montoAFP
+        );
+
+        // 5. Calcular ISR automáticamente.
+        const montoISR = calcularISR(remuneracionGravada);
+
+        // 6. Calcular deducciones totales.
         const totalDeducciones = redondear(
             montoISSS + montoAFP + montoISR
         );
 
+        // 7. Calcular salario neto.
         const salarioNeto = redondear(
             salarioPeriodo - totalDeducciones
         );
 
         if (salarioNeto < 0) {
             return res.status(400).json({
-                mensaje: "Las deducciones no pueden superar el salario del período."
+                mensaje:
+                    "Las deducciones no pueden superar el salario del período."
             });
         }
 
-        // 3. Insertar nómina.
+        // 8. Insertar nómina.
         const resultado = await pool.request()
             .input("id_empleado", sql.Int, Number(id_empleado))
             .input("fecha_inicio", sql.Date, fecha_inicio)
             .input("fecha_fin", sql.Date, fecha_fin)
-            .input("salario_base_snapshot", sql.Decimal(10, 2), salarioBase)
-            .input("salario_periodo", sql.Decimal(10, 2), salarioPeriodo)
-            .input("monto_isss", sql.Decimal(10, 2), montoISSS)
-            .input("monto_afp", sql.Decimal(10, 2), montoAFP)
-            .input("monto_isr", sql.Decimal(10, 2), montoISR)
-            .input("total_deducciones", sql.Decimal(10, 2), totalDeducciones)
-            .input("salario_neto", sql.Decimal(10, 2), salarioNeto)
+            .input(
+                "salario_base_snapshot",
+                sql.Decimal(10, 2),
+                salarioBase
+            )
+            .input(
+                "salario_periodo",
+                sql.Decimal(10, 2),
+                salarioPeriodo
+            )
+            .input(
+                "monto_isss",
+                sql.Decimal(10, 2),
+                montoISSS
+            )
+            .input(
+                "monto_afp",
+                sql.Decimal(10, 2),
+                montoAFP
+            )
+            .input(
+                "monto_isr",
+                sql.Decimal(10, 2),
+                montoISR
+            )
+            .input(
+                "total_deducciones",
+                sql.Decimal(10, 2),
+                totalDeducciones
+            )
+            .input(
+                "salario_neto",
+                sql.Decimal(10, 2),
+                salarioNeto
+            )
             .query(`
                 INSERT INTO dbo.nominas (
                     id_empleado,
@@ -304,15 +377,26 @@ const crearNomina = async (req, res, next) => {
             `);
 
         return res.status(201).json({
-            mensaje: "Nómina calculada y registrada correctamente.",
+            mensaje:
+                "Nómina quincenal calculada y registrada correctamente.",
+            calculo: {
+                salario_periodo: salarioPeriodo,
+                monto_isss: montoISSS,
+                monto_afp: montoAFP,
+                remuneracion_gravada: remuneracionGravada,
+                monto_isr: montoISR,
+                total_deducciones: totalDeducciones,
+                salario_neto: salarioNeto
+            },
             nomina: resultado.recordset[0]
         });
 
     } catch (error) {
-        // Índice único para empleado y período.
+        // Manejo de duplicados por empleado y período.
         if (error.number === 2601 || error.number === 2627) {
             return res.status(409).json({
-                mensaje: "Ya existe una nómina para ese empleado y período."
+                mensaje:
+                    "Ya existe una nómina para ese empleado y período."
             });
         }
 
@@ -369,12 +453,14 @@ const pagarNomina = async (req, res, next) => {
 
         if (resultado.recordset.length === 0) {
             return res.status(404).json({
-                mensaje: "Nómina no encontrada o ya fue pagada."
+                mensaje:
+                    "Nómina no encontrada o ya fue pagada."
             });
         }
 
         return res.status(200).json({
-            mensaje: "Nómina marcada como pagada correctamente.",
+            mensaje:
+                "Nómina marcada como pagada correctamente.",
             nomina: resultado.recordset[0]
         });
 

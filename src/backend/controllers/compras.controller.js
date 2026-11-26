@@ -34,7 +34,7 @@ const registrarCompra = async (req, res, next) => {
             });
         }
 
-        if (!numero_factura || !fecha_compra) {
+        if (typeof numero_factura !== "string" || !numero_factura.trim() || numero_factura.trim().length > 50 || !fecha_compra) {
             return res.status(400).json({
                 mensaje: "El número de factura y la fecha son obligatorios."
             });
@@ -46,16 +46,13 @@ const registrarCompra = async (req, res, next) => {
             });
         }
 
-        if (
-            condicion_pago === "CREDITO" &&
-            !fecha_vencimiento
-        ) {
+        if (condicion_pago === "CREDITO" && (!fecha_vencimiento || fecha_vencimiento < fecha_compra)) {
             return res.status(400).json({
                 mensaje: "Las compras a crédito requieren fecha de vencimiento."
             });
         }
 
-        if (!Array.isArray(detalles) || detalles.length === 0) {
+        if (!Array.isArray(detalles) || detalles.length === 0 || detalles.length > 100) {
             return res.status(400).json({
                 mensaje: "La factura debe contener al menos un insumo."
             });
@@ -102,6 +99,17 @@ const registrarCompra = async (req, res, next) => {
             });
         }
 
+        // Fechas ISO estrictas y coherentes.
+        const fechaISOValida = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().slice(0,10) === v;
+        if (!fechaISOValida(fecha_compra) || (fecha_vencimiento && !fechaISOValida(fecha_vencimiento)) || fecha_compra > new Date().toISOString().slice(0,10)) {
+            return res.status(400).json({ mensaje: "Las fechas de compra o vencimiento no son válidas." });
+        }
+        // IVA: permite factura exenta (0) o IVA del 13% sobre subtotal.
+        const ivaEsperado = redondear(valorSubtotal * 0.13);
+        if (valorIva !== 0 && Math.abs(valorIva - ivaEsperado) > 0.01) {
+            return res.status(400).json({ mensaje: "El IVA debe ser 0 (exento) o corresponder al 13% del subtotal." });
+        }
+
         const total = redondear(valorSubtotal + valorIva);
         const clasificaciones = [...new Set(detalles.map(item => item.clasificacion))];
 
@@ -124,6 +132,21 @@ const tipoCompra = clasificaciones.length === 1
         if (proveedor.recordset.length === 0) {
             throw new Error("El proveedor no existe o está inactivo.");
         }
+
+        // Verificar factura duplicada para proveedor y sucursal.
+        const duplicada = await new sql.Request(transaction)
+            .input("id_proveedor", sql.Int, idProveedor)
+            .input("sucursal", sql.Int, idSucursal)
+            .input("factura", sql.VarChar(50), numero_factura.trim())
+            .query(`SELECT TOP 1 id_compra FROM dbo.compras WITH (UPDLOCK, HOLDLOCK) WHERE id_proveedor=@id_proveedor AND id_sucursal=@sucursal AND numero_factura=@factura AND estado <> 'ANULADA'`);
+        if (duplicada.recordset.length) throw Object.assign(new Error("Esta factura ya fue registrada para este proveedor en la sucursal."), {status:409});
+
+        // Validar que todos los insumos existan.
+        const ids = [...new Set(detalles.map(x => Number(x.id_insumo)))];
+        const insumosValidados = await new sql.Request(transaction)
+            .query(`SELECT id_insumo FROM dbo.insumos WHERE activo=1`);
+        const existentes = new Set(insumosValidados.recordset.map(x => Number(x.id_insumo)));
+        if (ids.some(id => !existentes.has(id))) throw Object.assign(new Error("Uno o más insumos no existen o están inactivos."), {status:400});
 
         // Registrar encabezado de factura
         const compraResult = await new sql.Request(transaction)
@@ -231,6 +254,8 @@ const tipoCompra = clasificaciones.length === 1
             } catch (_) {}
         }
 
+        if (error.status) return res.status(error.status).json({mensaje:error.message});
+        if (error.number === 2601 || error.number === 2627) return res.status(409).json({mensaje:"Factura duplicada."});
         next(error);
     }
 };
@@ -240,7 +265,9 @@ const obtenerCompras = async (req, res, next) => {
     try {
         const pool = await poolPromise;
 
-        const resultado = await pool.request().query(`
+        const resultado = await pool.request()
+            .input("id_sucursal", sql.Int, req.user.id_sucursal)
+            .query(`
             SELECT
                 c.id_compra,
                 c.numero_factura,
@@ -259,6 +286,7 @@ const obtenerCompras = async (req, res, next) => {
                 ON c.id_proveedor = p.id_proveedor
             INNER JOIN dbo.sucursales s
                 ON c.id_sucursal = s.id_sucursal
+            WHERE c.id_sucursal = @id_sucursal
             ORDER BY c.id_compra DESC;
         `);
 
@@ -302,7 +330,7 @@ const registrarAbono = async (req, res, next) => {
             });
         }
 
-        if (!Number.isFinite(monto) || monto <= 0) {
+        if (!Number.isFinite(monto) || monto <= 0 || Math.round(monto * 100) !== monto * 100) {
             return res.status(400).json({
                 mensaje: "El monto del abono debe ser mayor que cero."
             });
@@ -320,13 +348,15 @@ const registrarAbono = async (req, res, next) => {
         // Bloquear la cuenta para evitar abonos simultáneos
         const cuentaResult = await new sql.Request(transaction)
             .input("id_cuenta", sql.Int, idCuenta)
+            .input("id_sucursal", sql.Int, Number(req.user.id_sucursal))
             .query(`
-                SELECT id_cuenta_por_pagar,
-                       monto_original,
-                       saldo_pendiente,
-                       estado
-                FROM dbo.cuentas_por_pagar WITH (UPDLOCK, HOLDLOCK)
-                WHERE id_cuenta_por_pagar = @id_cuenta
+                SELECT cp.id_cuenta_por_pagar,
+                       cp.monto_original,
+                       cp.saldo_pendiente,
+                       cp.estado
+                FROM dbo.cuentas_por_pagar cp WITH (UPDLOCK, HOLDLOCK)
+                INNER JOIN dbo.compras c ON c.id_compra=cp.id_compra
+                WHERE cp.id_cuenta_por_pagar = @id_cuenta AND c.id_sucursal = ${'@id_sucursal'}
             `);
 
         if (cuentaResult.recordset.length === 0) {
@@ -409,6 +439,7 @@ const registrarAbono = async (req, res, next) => {
             }
         }
 
+        if (error.status) return res.status(error.status).json({mensaje:error.message});
         if (error.message === "La cuenta por pagar no existe.") {
             return res.status(404).json({ mensaje: error.message });
         }
@@ -428,7 +459,9 @@ const obtenerCuentasPorPagar = async (req, res, next) => {
     try {
         const pool = await poolPromise;
 
-        const resultado = await pool.request().query(`
+        const resultado = await pool.request()
+            .input("id_sucursal", sql.Int, req.user.id_sucursal)
+            .query(`
             SELECT
                 cp.id_cuenta_por_pagar,
                 cp.id_compra,
@@ -442,6 +475,7 @@ const obtenerCuentasPorPagar = async (req, res, next) => {
             FROM dbo.cuentas_por_pagar AS cp
             INNER JOIN dbo.compras AS c
                 ON cp.id_compra = c.id_compra
+            WHERE c.id_sucursal = @id_sucursal
             ORDER BY
                 CASE
                     WHEN cp.estado = 'PENDIENTE' THEN 1
