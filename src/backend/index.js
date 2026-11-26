@@ -17,19 +17,87 @@ const nominaRoutes = require("./routes/nomina.routes");
 
 const app = express();
 
-// Middlewares globales
-app.use(cors());
-app.use(express.json());
+// CORS
+const origins = (
+    process.env.FRONTEND_ORIGINS ||
+    "http://localhost:5173,http://127.0.0.1:5173"
+)
+    .split(",")
+    .map(origin => origin.trim())
+    .filter(Boolean);
 
-// Ruta de comprobacion
+app.use(cors({
+    origin(origin, callback) {
+        // Permite solicitudes sin Origin (por ejemplo, herramientas locales).
+        if (!origin || origins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        const error = new Error("Origen no autorizado por CORS");
+        error.status = 403;
+        return callback(error);
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+    credentials: false
+}));
+
+app.use(express.json({ limit: "100kb" }));
+
+// Limitador por IP
+const buckets = new Map();
+let requestsSinceCleanup = 0;
+
+const rateLimit = (max = 120, windowMs = 60000) => {
+    return (req, res, next) => {
+        const key = req.ip || req.socket.remoteAddress || "unknown";
+        const now = Date.now();
+
+        let bucket = buckets.get(key);
+
+        if (!bucket || now - bucket.start >= windowMs) {
+            bucket = { start: now, count: 0 };
+        }
+
+        bucket.count++;
+        buckets.set(key, bucket);
+
+        // Limpieza periódica de registros expirados.
+        requestsSinceCleanup++;
+
+        if (requestsSinceCleanup >= 500) {
+            requestsSinceCleanup = 0;
+
+            for (const [ip, data] of buckets.entries()) {
+                if (now - data.start >= windowMs) {
+                    buckets.delete(ip);
+                }
+            }
+        }
+
+        if (bucket.count > max) {
+            return res.status(429).json({
+                mensaje: "Demasiadas solicitudes. Intente nuevamente más tarde."
+            });
+        }
+
+        next();
+    };
+};
+
+// Limitador general y específico de autenticación.
+app.use(rateLimit(120, 60000));
+app.use("/api/auth", rateLimit(12, 60000));
+
+// Health check
 app.get("/api/health", (req, res) => {
     res.status(200).json({
         status: "OK",
-        message: "API Restaurante Origenes SV funcionando"
+        message: "API Restaurante Orígenes SV funcionando"
     });
 });
 
-// Rutas principales
+// Rutas
 app.use("/api/auth", authRoutes);
 app.use("/api/inventario", inventarioRoutes);
 app.use("/api/productos", productosRoutes);
@@ -48,7 +116,7 @@ app.use((req, res) => {
     });
 });
 
-// Manejo global de errores
+// Manejo centralizado de errores
 app.use((error, req, res, next) => {
     console.error("Error en el servidor:", error);
 
@@ -56,10 +124,12 @@ app.use((error, req, res, next) => {
         return next(error);
     }
 
-    res.status(error.status || 500).json({
-        mensaje: error.status
-            ? error.message
-            : "Error interno del servidor"
+    const status = error.status || 500;
+
+    res.status(status).json({
+        mensaje: status >= 500
+            ? "Error interno del servidor"
+            : error.message
     });
 });
 
@@ -67,7 +137,9 @@ const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
     app.listen(PORT, () => {
-        console.log(`Servidor Origenes SV corriendo en http://localhost:${PORT}`);
+        console.log(
+            `Servidor Orígenes SV corriendo en http://localhost:${PORT}`
+        );
     });
 }
 

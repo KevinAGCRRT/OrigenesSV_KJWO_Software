@@ -1,21 +1,36 @@
+
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { sql, poolPromise } = require("../config/coneccionSQLserver");
 
 const iniciarSesion = async (req, res, next) => {
     try {
-        const { username, password } = req.body;
+        const { username, password } = req.body || {};
 
         // Validar datos recibidos
-        if (!username || !password) {
+        if (
+            typeof username !== "string" ||
+            typeof password !== "string" ||
+            !username.trim() ||
+            !password ||
+            username.trim().length > 50 ||
+            password.length > 1024
+        ) {
             return res.status(400).json({
-                mensaje: "El usuario y la contraseña son obligatorios"
+                mensaje: "El usuario y la contraseña son obligatorios y válidos"
             });
         }
 
-        // Buscar usuario y datos del empleado
+        // Verificar configuración JWT
+        if (!process.env.JWT_SECRET) {
+            return res.status(500).json({
+                mensaje: "La configuración de autenticación no está disponible"
+            });
+        }
+
         const pool = await poolPromise;
 
+        // Buscar usuario, empleado y estado de sucursal
         const resultado = await pool.request()
             .input("username", sql.VarChar(50), username.trim())
             .query(`
@@ -29,11 +44,14 @@ const iniciarSesion = async (req, res, next) => {
                     e.nombre,
                     e.apellido,
                     e.id_sucursal,
-                    e.activo AS empleado_activo
-                FROM usuarios u
-                INNER JOIN empleados e
+                    e.activo AS empleado_activo,
+                    s.estado_sucursal AS sucursal_activa
+                FROM dbo.usuarios u
+                INNER JOIN dbo.empleados e
                     ON u.id_empleado = e.id_empleado
-                WHERE u.username = @username
+                INNER JOIN dbo.sucursales s
+                    ON e.id_sucursal = s.id_sucursal
+                WHERE u.username = @username;
             `);
 
         if (resultado.recordset.length === 0) {
@@ -44,14 +62,18 @@ const iniciarSesion = async (req, res, next) => {
 
         const usuario = resultado.recordset[0];
 
-        // Comprobar estado de las cuentas
-        if (!usuario.usuario_activo || !usuario.empleado_activo) {
+        // Comprobar estados actuales
+        if (
+            !usuario.usuario_activo ||
+            !usuario.empleado_activo ||
+            !usuario.sucursal_activa
+        ) {
             return res.status(403).json({
-                mensaje: "La cuenta se encuentra desactivada"
+                mensaje: "La cuenta, empleado o sucursal se encuentra desactivada"
             });
         }
 
-        // Verificar contraseña con bcrypt
+        // Verificar contraseña
         const passwordValida = await bcrypt.compare(
             password,
             usuario.password_hash
@@ -63,20 +85,10 @@ const iniciarSesion = async (req, res, next) => {
             });
         }
 
-        // Verificar configuración JWT
-        if (!process.env.JWT_SECRET) {
-            return res.status(500).json({
-                mensaje: "La configuración de autenticación no está disponible"
-            });
-        }
-
         // Generar token
         const token = jwt.sign(
             {
-                id_usuario: usuario.id_usuario,
-                id_empleado: usuario.id_empleado,
-                rol: usuario.rol,
-                id_sucursal: usuario.id_sucursal
+                id_usuario: usuario.id_usuario
             },
             process.env.JWT_SECRET,
             {
