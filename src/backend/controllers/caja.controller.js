@@ -104,13 +104,14 @@ const crearError = (mensaje, status) => {
 };
 
 // ======================================================
-// 1. ABRIR CAJA
+// 1. ABRIR CAJA (TRANSACCIONAL Y SINCRONIZADA)
 // ======================================================
 
 const abrirCaja = async (req, res, next) => {
-    try {
-        const pool = await poolPromise;
+    let transaction;
+    let transactionIniciada = false;
 
+    try {
         const idSucursal = req.user.id_sucursal;
         const idEmpleado = req.user.id_empleado;
 
@@ -140,7 +141,63 @@ const abrirCaja = async (req, res, next) => {
             montoInicialCentavos
         );
 
-        const resultado = await pool.request()
+        const pool = await poolPromise;
+
+        transaction = new sql.Transaction(pool);
+        await transaction.begin();
+        transactionIniciada = true;
+
+        // 1. Bloquear el registro del empleado.
+        // La baja lógica utilizará el mismo bloqueo.
+        const resultadoEmpleado = await transaction.request()
+            .input("id_empleado", sql.Int, idEmpleado)
+            .input("id_sucursal", sql.Int, idSucursal)
+            .query(`
+                SELECT
+                    id_empleado,
+                    id_sucursal,
+                    activo
+                FROM dbo.empleados WITH (UPDLOCK, HOLDLOCK)
+                WHERE id_empleado = @id_empleado
+                  AND id_sucursal = @id_sucursal;
+            `);
+
+        if (
+            resultadoEmpleado.recordset.length === 0 ||
+            resultadoEmpleado.recordset[0].activo !== true
+        ) {
+            await transaction.rollback();
+            transactionIniciada = false;
+
+            return res.status(403).json({
+                mensaje: "El empleado no está activo o no pertenece a esta sucursal."
+            });
+        }
+
+        // 2. Comprobar que no tenga una caja abierta.
+        const resultadoCaja = await transaction.request()
+            .input("id_empleado", sql.Int, idEmpleado)
+            .input("id_sucursal", sql.Int, idSucursal)
+            .query(`
+                SELECT TOP 1
+                    id_caja
+                FROM dbo.cajas
+                WHERE id_empleado = @id_empleado
+                  AND id_sucursal = @id_sucursal
+                  AND estado = 'ABIERTA';
+            `);
+
+        if (resultadoCaja.recordset.length > 0) {
+            await transaction.rollback();
+            transactionIniciada = false;
+
+            return res.status(409).json({
+                mensaje: "El empleado ya tiene una caja abierta en esta sucursal."
+            });
+        }
+
+        // 3. Crear caja.
+        const resultado = await transaction.request()
             .input("id_sucursal", sql.Int, idSucursal)
             .input("id_empleado", sql.Int, idEmpleado)
             .input("monto_inicial", sql.Decimal(12, 2), montoInicial)
@@ -160,6 +217,9 @@ const abrirCaja = async (req, res, next) => {
                 );
             `);
 
+        await transaction.commit();
+        transactionIniciada = false;
+
         return res.status(201).json({
             mensaje: "Caja abierta correctamente.",
             id_caja: resultado.recordset[0].id_caja,
@@ -168,6 +228,15 @@ const abrirCaja = async (req, res, next) => {
         });
 
     } catch (error) {
+
+        if (transactionIniciada && transaction) {
+            try {
+                await transaction.rollback();
+            } catch (errorRollback) {
+                // Conservamos el error original.
+            }
+        }
+
         if (error.number === 2601 || error.number === 2627) {
             return res.status(409).json({
                 mensaje: "El empleado ya tiene una caja abierta en esta sucursal."
