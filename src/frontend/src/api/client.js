@@ -1,7 +1,4 @@
-import { mockRequest } from './mock/mockServer.js'
-
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api'
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 export const TOKEN_KEY = 'origenes_token'
 export const USUARIO_KEY = 'origenes_usuario'
@@ -26,14 +23,6 @@ function cerrarSesionLocal() {
 // convierte la respuesta a JSON y lanza ApiError si algo sale mal.
 async function request(metodo, ruta, body = null, headersExtra = {}) {
   const token = localStorage.getItem(TOKEN_KEY)
-
-  if (USE_MOCK) {
-    try {
-      return await mockRequest(metodo, ruta, body, token, headersExtra)
-    } catch (err) {
-      throw new ApiError(err.mensaje || 'Error en datos simulados', err.status || 500, err.detalles, err.codigo)
-    }
-  }
 
   const opciones = {
     method: metodo,

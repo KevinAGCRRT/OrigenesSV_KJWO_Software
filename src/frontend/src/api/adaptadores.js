@@ -40,7 +40,6 @@ export function normalizarProductos(productos, inventario = null) {
 
 // usuario que devuelve el login
 export function normalizarUsuario(u) {
-  if (u.id !== undefined && u.sucursal_id !== undefined) return u // datos simulados
   return {
     id: u.id_usuario,
     id_empleado: u.id_empleado,
@@ -63,8 +62,6 @@ export function formatoCorrelativo(tipo, numero) {
 
 // nombres: id_producto -> nombre (el detalle solo trae ids)
 export function normalizarVenta(v, nombres = new Map()) {
-  if (v.id !== undefined && typeof v.correlativo === 'string') return v // datos simulados
-
   return {
     id: v.id_venta,
     correlativo: formatoCorrelativo(v.tipo_documento, v.correlativo),

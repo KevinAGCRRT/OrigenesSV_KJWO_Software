@@ -5,8 +5,6 @@ import { useAuth } from '../../context/AuthContext.jsx'
 import ErrorBox from '../../components/common/ErrorBox.jsx'
 import TextoRotativo from '../../components/common/TextoRotativo.jsx'
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
-
 const rutaInicial = {
   gerente: '/',
   cajero: '/pos',
@@ -103,16 +101,6 @@ function Login() {
             Iniciar sesión
           </Button>
 
-          {USE_MOCK && (
-            <div className="login-demo">
-              <p className="mb-1">Modo de prueba (contraseña 1234):</p>
-              <ul className="mb-0">
-                <li>gerente</li>
-                <li>cajero</li>
-                <li>barista</li>
-              </ul>
-            </div>
-          )}
         </Form>
       </section>
     </div>
